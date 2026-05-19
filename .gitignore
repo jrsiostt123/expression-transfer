@@ -1,0 +1,25 @@
+# Model file (too large for git)
+*.dat
+*.dat.bz2
+
+# Output images
+output/
+
+# Dataset images (require registration)
+data/sample_images/*.jpg
+data/sample_images/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
