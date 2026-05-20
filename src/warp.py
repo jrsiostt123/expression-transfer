@@ -27,36 +27,44 @@ def _apply_affine_to_triangle(
     # Bounding rect of destination triangle
     x, y, w, h = cv2.boundingRect(dst_tri.astype(np.float32))
     x, y = max(x, 0), max(y, 0)
-    H, W = src_img.shape[:2]
-    w = min(w, W - x)
-    h = min(h, H - y)
+    Hd, Wd = dst_img.shape[:2]
+    w = min(w, Wd - x)
+    h = min(h, Hd - y)
     if w <= 0 or h <= 0:
         return
 
-    # Offset triangles to bounding rect coordinates
-    src_tri_offset = src_tri - src_tri.min(axis=0)
+    # Crop source patch and compute offsets in the same integer-rect coords
+    Hs, Ws = src_img.shape[:2]
+    sx, sy, sw, sh = cv2.boundingRect(src_tri.astype(np.float32))
+    sx, sy = max(sx, 0), max(sy, 0)
+    sw = min(sw, Ws - sx)
+    sh = min(sh, Hs - sy)
+    if sw <= 0 or sh <= 0:
+        return
+
+    # Offset triangles to their respective bounding rect coordinate systems
+    src_tri_offset = src_tri - np.array([sx, sy])
     dst_tri_offset = dst_tri - np.array([x, y])
 
-    # Compute affine transform
+    # Compute affine transform mapping src triangle to dst triangle
     M = cv2.getAffineTransform(
         src_tri_offset.astype(np.float32),
         dst_tri_offset.astype(np.float32)
     )
 
     # Crop source patch
-    sx, sy, sw, sh = cv2.boundingRect(src_tri.astype(np.float32))
-    sx, sy = max(sx, 0), max(sy, 0)
-    sw = min(sw, W - sx)
-    sh = min(sh, H - sy)
-    if sw <= 0 or sh <= 0:
-        return
     src_patch = src_img[sy:sy+sh, sx:sx+sw]
 
     # Warp patch
-    warped_patch = cv2.warpAffine(src_patch, M, (w, h), flags=cv2.INTER_LINEAR,
-                                   borderMode=cv2.BORDER_REFLECT_101)
+    warped_patch = cv2.warpAffine(
+        src_patch,
+        M,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT_101,
+    )
 
-    # Create triangle mask
+    # Create triangle mask in destination-rect coords
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.fillConvexPoly(mask, dst_tri_offset.astype(np.int32), 255)
 

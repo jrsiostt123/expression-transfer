@@ -15,6 +15,7 @@ from landmark import detect_landmarks
 from expression import compute_displacement
 from warp import warp_face
 from blend import blend, save_comparison
+from align import align_face
 
 
 def run(source_path, driver_path, driver_neutral_path=None, scale=1.0, output_dir="output"):
@@ -43,12 +44,27 @@ def run(source_path, driver_path, driver_neutral_path=None, scale=1.0, output_di
         print("Error: landmark detection failed on one or more images.")
         sys.exit(1)
 
-    print("[3/4] Computing displacement & warping...")
-    from expression import compute_displacement, apply_displacement
-    displacement = compute_displacement(source_lm, driver_lm, driver_neutral_lm, scale=scale)
-    warped_img, face_mask = warp_face(source_img, source_lm, displacement)
+    print("[3/4] Face alignment (stabilization)...")
+    # Align all images to reduce rotation differences; blend back in original space.
+    src_aligned, src_lm_aligned, M_src, M_src_inv = align_face(source_img, source_lm)
+    drv_aligned, drv_lm_aligned, _, _ = align_face(driver_img, driver_lm)
+    if driver_neutral_img is not None and driver_neutral_lm is not None:
+        drvN_aligned, drvN_lm_aligned, _, _ = align_face(driver_neutral_img, driver_neutral_lm)
+    else:
+        drvN_aligned = None
+        drvN_lm_aligned = None
 
-    print("[4/4] Blending...")
+    print("[4/4] Computing displacement & warping in aligned space...")
+    from expression import compute_displacement
+    displacement = compute_displacement(src_lm_aligned, drv_lm_aligned, drvN_lm_aligned, scale=scale)
+    warped_aligned, face_mask_aligned = warp_face(src_aligned, src_lm_aligned, displacement)
+
+    # Bring warped result and mask back to original (unaligned) space for blending
+    h, w = source_img.shape[:2]
+    warped_img = cv2.warpAffine(warped_aligned, M_src_inv, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+    face_mask = cv2.warpAffine(face_mask_aligned, M_src_inv, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+
+    print("[5/5] Blending...")
     result = blend(source_img, warped_img, face_mask)
 
     # Save outputs

@@ -10,12 +10,13 @@ A classical computer vision pipeline for transferring facial expressions between
 ## Pipeline Overview
 
 ```
-Input: source face (neutral) + driver face (expressive)
+Input: source face (neutral) + driver face (expressive) [driver neutral OPTIONAL]
   │
-  ├── Phase 1: Landmark Detection       [src/landmark.py]
-  ├── Phase 2: Expression Parameterization [src/expression.py]
-  ├── Phase 3: Face Warping             [src/warp.py]
-  └── Phase 4: Poisson Blending        [src/blend.py]
+  ├── Phase 0: Face Alignment (stabilization)   [src/align.py]
+  ├── Phase 1: Landmark Detection               [src/landmark.py]
+  ├── Phase 2: Expression Parameterization      [src/expression.py]
+  ├── Phase 3: Face Warping                     [src/warp.py]
+  └── Phase 4: Poisson Blending                 [src/blend.py]
   │
 Output: source face with driver's expression
 ```
@@ -31,8 +32,12 @@ pip install -r requirements.txt
 # 2. Download dlib landmark model
 bash scripts/download_model.sh
 
-# 3. Run demo
+# 3. Run demo (no driver neutral)
 python demo.py --source data/sample_images/source.jpg --driver data/sample_images/driver.jpg
+
+# Optionally, if you have a neutral image of the driver (better):
+python demo.py --source data/sample_images/source.jpg --driver data/sample_images/driver_expr.jpg \
+               --driver-neutral data/sample_images/driver_neutral.jpg
 ```
 
 ---
@@ -72,15 +77,22 @@ detect_landmarks(image: np.ndarray) -> np.ndarray  # shape: (68, 2), dtype: floa
 
 ### `expression.py`
 ```python
-compute_displacement(source_lm: np.ndarray, driver_lm: np.ndarray, driver_neutral_lm: np.ndarray) -> np.ndarray
+compute_displacement(
+    source_lm: np.ndarray,
+    driver_lm: np.ndarray,
+    driver_neutral_lm: np.ndarray | None = None,
+    scale: float = 0.7,
+) -> np.ndarray
 # shape: (68, 2), dtype: float32
-# Returns per-landmark displacement vectors (driver_expression - driver_neutral)
+# With driver_neutral_lm: uses (driver_expression - driver_neutral) rescaled to source face size.
+# Without driver_neutral_lm: directly aligns driver to source and warps toward those positions.
 ```
 
 ### `warp.py`
 ```python
 warp_face(source_img: np.ndarray, source_lm: np.ndarray, displacement: np.ndarray) -> tuple[np.ndarray, np.ndarray]
 # Returns: (warped_image, face_mask) — both same shape as source_img
+# Notes: Per-triangle affine warping with corrected patch coordinate frames.
 ```
 
 ### `blend.py`
@@ -95,7 +107,7 @@ blend(source_img: np.ndarray, warped_img: np.ndarray, mask: np.ndarray) -> np.nd
 
 | Member | Phase | Branch |
 |--------|-------|--------|
-| Member A | Landmark detection + Expression parameterization | `feature/landmark` |
+| Member A | Landmark detection + Expression parameterization + Alignment | `feature/landmark` |
 | Member B | Face warping | `feature/warp` |
 | Member C | Poisson blending + Evaluation | `feature/blend` |
 
