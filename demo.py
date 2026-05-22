@@ -2,12 +2,20 @@
 demo.py — End-to-end expression transfer demo
 Usage: python demo.py --source <path> --driver <path> [--driver-neutral <path>] [--scale 0.9]
 """
+from __future__ import annotations
 
 import argparse
+import sys
+import os
+
+# Print immediately (before slow library imports) so the user knows the
+# script is alive.  flush=True is important on Windows where stdout is
+# line-buffered and output can be delayed otherwise.
+print("Starting — loading libraries (scipy / mediapipe may take ~20 s on first run)...",
+      flush=True)
+
 import cv2
 import numpy as np
-import os
-import sys
 
 # Make repo root importable, so we can import src.* as a package
 sys.path.insert(0, os.path.dirname(__file__))
@@ -20,6 +28,55 @@ from src.align import align_face
 from src.evaluate import compute_metrics, print_metrics, save_metrics_json
 
 
+def _load_image(path: str) -> np.ndarray | None:
+    """
+    Load image with defensive handling for common real-world issues:
+
+    1. RGBA PNG (4-channel) — converted to BGR; ignores transparency.
+    2. Grayscale image (1-channel) — promoted to 3-channel BGR.
+    3. EXIF auto-rotation — JPEG photos from phones are often stored
+       rotated 90°/180°; cv2.imread ignores EXIF, so we correct it here
+       via PIL when available.  If PIL is absent we proceed as-is and
+       print a warning so the caller knows.
+    """
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        return None
+
+    # ── Channel normalisation ──────────────────────────────────────────────
+    if img.ndim == 2:
+        # Pure grayscale (e.g. some medical / passport photos)
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif img.ndim == 3 and img.shape[2] == 4:
+        # RGBA PNG — drop alpha, keep BGR
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    elif img.ndim == 3 and img.shape[2] != 3:
+        print(f"[load_image] Unexpected channel count {img.shape[2]} in {path} — skipping.")
+        return None
+
+    # ── EXIF rotation correction (JPEG only) ──────────────────────────────
+    if os.path.splitext(path)[1].lower() in (".jpg", ".jpeg"):
+        try:
+            from PIL import Image as _PIL, ExifTags as _ExifTags
+            _ORIENT_TAG = next(k for k, v in _ExifTags.TAGS.items() if v == "Orientation")
+            with _PIL.open(path) as _pil:
+                orient = (_pil.getexif() or {}).get(_ORIENT_TAG, 1)
+            _ROT = {
+                3: cv2.ROTATE_180,
+                6: cv2.ROTATE_90_CLOCKWISE,
+                8: cv2.ROTATE_90_COUNTERCLOCKWISE,
+            }
+            if orient in _ROT:
+                img = cv2.rotate(img, _ROT[orient])
+        except ImportError:
+            print("[load_image] PIL not found — EXIF rotation not corrected. "
+                  "Install Pillow if images appear rotated.")
+        except Exception:
+            pass  # No EXIF or unreadable — proceed as-is
+
+    return img
+
+
 def _transform_landmarks(lm: np.ndarray, M: np.ndarray) -> np.ndarray:
     """Apply a 2×3 affine matrix M to a (N, 2) landmark array."""
     ones = np.ones((lm.shape[0], 1), dtype=np.float32)
@@ -27,19 +84,22 @@ def _transform_landmarks(lm: np.ndarray, M: np.ndarray) -> np.ndarray:
     return (pts @ M.T).astype(np.float32)
 
 
-def run(source_path, driver_path, driver_neutral_path=None, scale=1.0, output_dir="output",
+def run(source_path, driver_path, driver_neutral_path=None, scale=0.7, output_dir="output",
         run_eval=True, save_metrics=False):
     os.makedirs(output_dir, exist_ok=True)
 
     print("[1/5] Loading images...")
-    source_img = cv2.imread(source_path)
-    driver_img = cv2.imread(driver_path)
+    source_img = _load_image(source_path)
+    driver_img = _load_image(driver_path)
     if source_img is None or driver_img is None:
         print("Error: could not load one or both images.")
         sys.exit(1)
 
     if driver_neutral_path:
-        driver_neutral_img = cv2.imread(driver_neutral_path)
+        driver_neutral_img = _load_image(driver_neutral_path)
+        if driver_neutral_img is None:
+            print("Error: could not load driver-neutral image.")
+            sys.exit(1)
     else:
         print("[!] No driver neutral provided — using direct warp mode.")
         print("    Source landmarks will be warped directly toward driver face geometry.")
@@ -135,11 +195,15 @@ def run(source_path, driver_path, driver_neutral_path=None, scale=1.0, output_di
     print(f"  Comparison: {comparison_path}")
 
     # ── Evaluation ────────────────────────────────────────────────────────────
+    # ETR uses base_result (before mouth seamlessClone) intentionally.
+    # After mouth clone, result landmarks shift to the driver's mouth position,
+    # which inflates ETR far above 1.0 even at low scale — making it meaningless.
+    # base_result reflects the pure warp displacement and is the correct signal.
     if run_eval:
         print("\n[eval] Computing metrics...")
         metrics = compute_metrics(
             source_img = source_img,
-            result_img = result,
+            result_img = base_result,      # before mouth clone — ETR stays meaningful
             face_mask  = face_mask,
             source_lm  = source_lm,        # original space ✓
             target_lm  = target_lm_orig,   # original space ✓
