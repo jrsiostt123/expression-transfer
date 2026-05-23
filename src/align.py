@@ -12,9 +12,9 @@ from __future__ import annotations
 import numpy as np
 import cv2
 
-# Landmark indices (dlib 68)
-LEFT_EYE_OUTER = 36
-RIGHT_EYE_OUTER = 45
+# Landmark indices (MediaPipe 478)
+LEFT_EYE_OUTER  = 33
+RIGHT_EYE_OUTER = 263
 
 
 def _eye_angle(landmarks: np.ndarray) -> float:

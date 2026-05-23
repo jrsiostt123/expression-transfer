@@ -23,9 +23,9 @@ Changes vs original:
 
 import numpy as np
 
-# ── Landmark index ranges (dlib 68-point model) ──────────────────────────────
-_LEFT_EYE  = slice(36, 42)
-_RIGHT_EYE = slice(42, 48)
+# ── Landmark index ranges (MediaPipe 478-point model) ────────────────────────
+_LEFT_EYE  = [33, 160, 158, 133, 153, 144]
+_RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -58,11 +58,11 @@ def _align_landmarks(src: np.ndarray, ref: np.ndarray) -> np.ndarray:
     handled by align_face() before this function is called.
 
     Args:
-        src: (68, 2) landmarks to align
-        ref: (68, 2) reference landmarks
+        src: (478, 2) landmarks to align
+        ref: (478, 2) reference landmarks
 
     Returns:
-        (68, 2) src landmarks rescaled and translated to ref space
+        (478, 2) src landmarks rescaled and translated to ref space
     """
     src_lc, src_rc = _eye_centers(src)
     ref_lc, ref_rc = _eye_centers(ref)
@@ -96,7 +96,7 @@ def _auto_scale(
     heavily; ETR tests showed scale ~2.0 was needed for strong expressions.
 
     Args:
-        raw_displacement: (68, 2) unscaled displacement
+        raw_displacement: (478, 2) unscaled displacement
         source_iod:       inter-ocular distance of source face (pixels)
         target_ratio:     target P95 as fraction of IOD (default 0.35)
         min_scale:        lower clamp (default 0.3)
@@ -114,8 +114,8 @@ def _auto_scale(
 
 
 def _validate_landmarks(lm: np.ndarray, name: str) -> None:
-    if lm.shape != (68, 2):
-        raise ValueError(f"{name}: expected shape (68, 2), got {lm.shape}")
+    if lm.shape != (478, 2):
+        raise ValueError(f"{name}: expected shape (478, 2), got {lm.shape}")
     if not np.isfinite(lm).all():
         raise ValueError(f"{name}: contains NaN or Inf values")
 
@@ -145,9 +145,9 @@ def compute_displacement(
         No neutral photo needed; captures pose + expression together.
 
     Args:
-        source_lm:         (68, 2) landmarks of the source (target) face
-        driver_lm:         (68, 2) landmarks of the driver (expressive)
-        driver_neutral_lm: (68, 2) optional — driver neutral baseline
+        source_lm:         (478, 2) landmarks of the source (target) face
+        driver_lm:         (478, 2) landmarks of the driver (expressive)
+        driver_neutral_lm: (478, 2) optional — driver neutral baseline
         scale:             float to manually set expression strength, or
                            None (default) to auto-compute from displacement stats.
                            Typical range 0.5–1.5; auto usually lands in 1.0–2.0
@@ -157,7 +157,7 @@ def compute_displacement(
         auto_scale_max:    auto-scale upper clamp (default 2.5).
 
     Returns:
-        displacement: (68, 2) float32 array of (dx, dy) vectors
+        displacement: (478, 2) float32 array of (dx, dy) vectors
     """
     _validate_landmarks(source_lm,  "source_lm")
     _validate_landmarks(driver_lm,  "driver_lm")
@@ -218,11 +218,11 @@ def apply_displacement(landmarks: np.ndarray, displacement: np.ndarray) -> np.nd
     Use this for computing target_lm in demo.py (for ETR) or for debugging.
 
     Args:
-        landmarks:    (68, 2) source landmark positions
-        displacement: (68, 2) displacement vectors
+        landmarks:    (478, 2) source landmark positions
+        displacement: (478, 2) displacement vectors
 
     Returns:
-        new_landmarks: (68, 2) displaced landmark positions
+        new_landmarks: (478, 2) displaced landmark positions
     """
     return (landmarks + displacement).astype(np.float32)
 
@@ -231,13 +231,13 @@ def apply_displacement(landmarks: np.ndarray, displacement: np.ndarray) -> np.nd
 if __name__ == "__main__":
     rng = np.random.default_rng(42)
 
-    src = rng.uniform(100, 300, (68, 2)).astype(np.float32)
+    src = rng.uniform(100, 300, (478, 2)).astype(np.float32)
     # Give it a realistic eye layout so IOD is meaningful
-    src[36] = [150, 200]; src[41] = [170, 200]
-    src[42] = [210, 200]; src[47] = [230, 200]
+    src[33]  = [150, 200]; src[144] = [170, 200]   # left eye (MP indices)
+    src[362] = [210, 200]; src[263] = [230, 200]   # right eye (MP indices)
 
-    drv   = src + rng.uniform(-10, 10, (68, 2)).astype(np.float32)
-    drv_n = src + rng.uniform(-2,   2, (68, 2)).astype(np.float32)
+    drv   = src + rng.uniform(-10, 10, (478, 2)).astype(np.float32)
+    drv_n = src + rng.uniform(-2,   2, (478, 2)).astype(np.float32)
 
     print("=== Full mode ===")
     disp = compute_displacement(src, drv, drv_n)

@@ -128,9 +128,13 @@ def _color_drift(source: np.ndarray, result: np.ndarray, mask: np.ndarray) -> di
     return diffs
 
 
+_LEFT_EYE  = [33, 160, 158, 133, 153, 144]
+_RIGHT_EYE = [362, 385, 387, 263, 373, 380]
+
+
 def _eye_centers(lm: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return (left_eye_center, right_eye_center) averaged over 6 pts each."""
-    return lm[36:42].mean(axis=0), lm[42:48].mean(axis=0)
+    return lm[_LEFT_EYE].mean(axis=0), lm[_RIGHT_EYE].mean(axis=0)
 
 
 def _align_lm_similarity(src_lm: np.ndarray, ref_lm: np.ndarray) -> np.ndarray:
@@ -184,11 +188,11 @@ def compute_metrics(
         source_img: BGR source image (before transfer)
         result_img: BGR result image (after transfer)
         face_mask:  (H, W) uint8 mask — 255 = face region
-        source_lm:  (68, 2) source landmarks in ORIGINAL (unaligned) space
-        target_lm:  (68, 2) intended displaced landmarks in ORIGINAL space
+        source_lm:  (478, 2) source landmarks in ORIGINAL (unaligned) space
+        target_lm:  (478, 2) intended displaced landmarks in ORIGINAL space
                     (= source_lm + inv_transform(displacement), computed in demo.py)
-        driver_lm:  (68, 2) driver landmarks in ALIGNED space (drv_lm_aligned)
-        detect_fn:  callable(image) → (68, 2) or None.
+        driver_lm:  (478, 2) driver landmarks in ALIGNED space (drv_lm_aligned)
+        detect_fn:  callable(image) → (478, 2) or None.
                     Pass detect_landmarks from landmark.py to enable ETR + RMSE.
                     If None, both metrics are reported as None.
 
@@ -219,12 +223,15 @@ def compute_metrics(
     metrics["ssim_background"] = _ssim_masked(source_img, result_img, bg_mask)
 
     # ── 6. ETR  ──────────────────────────────────────────────────────────────
-    # Only measure on expression-relevant landmarks:
-    #   eyebrows (17-26) + mouth outer (48-59) + mouth inner (60-67)
-    # Jaw (0-16), nose bridge (27-30), and nose base (31-35) barely move
-    # with expression; including them shrinks the denominator and inflates
-    # ETR unpredictably, especially for subtle expressions like sad/surprised.
-    _EXPR_IDX = list(range(17, 27)) + list(range(48, 68))   # 28 landmarks
+    # Only measure on expression-relevant landmarks (MediaPipe 478 indices):
+    #   eyebrows + mouth outer + mouth inner
+    # Jaw, nose, and cheeks barely move with expression; including them
+    # shrinks the denominator and inflates ETR unpredictably.
+    _EXPR_IDX = (
+        [70, 63, 105, 66, 107, 336, 296, 334, 293, 300]          # brows
+        + [61, 40, 37, 0, 267, 270, 291, 321, 314, 17, 84, 91]   # outer lips
+        + [78, 191, 80, 13, 308, 402, 14, 88]                     # inner lips
+    )  # 30 landmarks total
 
     metrics["etr"]               = None
     metrics["lm_rmse_vs_driver"] = None

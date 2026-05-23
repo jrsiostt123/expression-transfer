@@ -139,8 +139,9 @@ def run(source_path, driver_path, driver_neutral_path=None, scale=0.7, output_di
         from src.warp import warp_image_by_landmarks  # type: ignore
         driver_to_target_aligned = warp_image_by_landmarks(drv_aligned, drv_lm_aligned, target_lm_aligned)
 
-        # Mouth masks (aligned space)
-        inner_poly = target_lm_aligned[60:68].astype(np.int32)
+        # Mouth masks (aligned space) — MediaPipe inner-lip indices
+        _MP_INNER_LIP = [78, 191, 80, 13, 308, 402, 14, 88]
+        inner_poly = target_lm_aligned[_MP_INNER_LIP].astype(np.int32)
         mouth_inner = np.zeros(face_mask_aligned.shape, dtype=np.uint8)
         cv2.fillPoly(mouth_inner, [inner_poly], 255)
         # Slightly erode inner so we don't overlap lip rim; keep outer in global mask
