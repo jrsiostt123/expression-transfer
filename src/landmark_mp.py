@@ -68,14 +68,15 @@ _MP_TO_68 = {
 }
 
 
-def detect_landmarks_mp(image: np.ndarray, refine: bool = True) -> np.ndarray | None:
+def _run_detector(image: np.ndarray, blendshapes: bool = False):
     """
-    Detect face landmarks and return (N, 2) array in pixel coords.
-    Returns None if detection fails.
+    Run FaceLandmarker and return (landmarks_array, blendshapes_array).
+    Either element may be None on detection failure.
+    Centralises model setup so both public functions share one code path.
     """
     if not _mp_available:
         print(f"[landmark_mp] mediapipe not available: {_import_error}")
-        return None
+        return None, None
 
     _ensure_model()
 
@@ -85,6 +86,7 @@ def detect_landmarks_mp(image: np.ndarray, refine: bool = True) -> np.ndarray | 
         num_faces=1,
         min_face_detection_confidence=0.5,
         min_face_presence_confidence=0.5,
+        output_face_blendshapes=blendshapes,
     )
 
     h, w = image.shape[:2]
@@ -96,10 +98,34 @@ def detect_landmarks_mp(image: np.ndarray, refine: bool = True) -> np.ndarray | 
 
     if not result.face_landmarks:
         print("[landmark_mp] Warning: no face detected.")
-        return None
+        return None, None
 
     pts = [(lm.x * w, lm.y * h) for lm in result.face_landmarks[0]]
-    return np.array(pts, dtype=np.float32)
+    lm_array = np.array(pts, dtype=np.float32)
+
+    bs_array = None
+    if blendshapes and result.face_blendshapes:
+        bs_array = np.array(
+            [c.score for c in result.face_blendshapes[0]], dtype=np.float32
+        )
+
+    return lm_array, bs_array
+
+
+def detect_landmarks_mp(image: np.ndarray, refine: bool = True) -> np.ndarray | None:
+    """Return (478, 2) pixel-coordinate landmark array, or None."""
+    lm, _ = _run_detector(image, blendshapes=False)
+    return lm
+
+
+def detect_blendshapes_mp(image: np.ndarray) -> np.ndarray | None:
+    """
+    Return a (52,) float32 array of MediaPipe blendshape scores, or None.
+    Scores are in [0, 1]. Index 0 is _neutral; indices 1-51 cover brows,
+    eyes, jaw, and mouth action units.
+    """
+    _, bs = _run_detector(image, blendshapes=True)
+    return bs
 
 
 def mp_to_dlib68(mp_lm: np.ndarray) -> np.ndarray:

@@ -20,7 +20,7 @@ import numpy as np
 # Make repo root importable, so we can import src.* as a package
 sys.path.insert(0, os.path.dirname(__file__))
 
-from src.landmark import detect_landmarks
+from src.landmark import detect_landmarks, detect_blendshapes
 from src.expression import compute_displacement, apply_displacement
 from src.warp import warp_face
 from src.blend import blend, save_comparison
@@ -109,6 +109,7 @@ def run(source_path, driver_path, driver_neutral_path=None, scale=0.7, output_di
     source_lm = detect_landmarks(source_img)
     driver_lm = detect_landmarks(driver_img)
     driver_neutral_lm = detect_landmarks(driver_neutral_img) if driver_neutral_img is not None else None
+    driver_bs = detect_blendshapes(driver_img)
 
     if any(lm is None for lm in [source_lm, driver_lm]):
         print("Error: landmark detection failed on one or more images.")
@@ -203,13 +204,15 @@ def run(source_path, driver_path, driver_neutral_path=None, scale=0.7, output_di
     if run_eval:
         print("\n[eval] Computing metrics...")
         metrics = compute_metrics(
-            source_img = source_img,
-            result_img = base_result,      # before mouth clone — ETR stays meaningful
-            face_mask  = face_mask,
-            source_lm  = source_lm,        # original space ✓
-            target_lm  = target_lm_orig,   # original space ✓
-            driver_lm  = drv_lm_aligned,   # aligned space  ✓ (used for LM RMSE only)
-            detect_fn  = detect_landmarks,
+            source_img         = source_img,
+            result_img         = base_result,      # before mouth clone — ETR stays meaningful
+            face_mask          = face_mask,
+            source_lm          = source_lm,        # original space ✓
+            target_lm          = target_lm_orig,   # original space ✓
+            driver_lm          = drv_lm_aligned,   # aligned space  ✓ (used for LM RMSE only)
+            detect_fn          = detect_landmarks,
+            driver_blendshapes = driver_bs,
+            detect_bs_fn       = detect_blendshapes,
         )
         print_metrics(metrics)
 

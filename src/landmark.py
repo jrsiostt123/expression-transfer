@@ -5,9 +5,14 @@ Returns the raw 478-point array (468 mesh + 10 iris refinement points).
 from __future__ import annotations
 import numpy as np
 
-from .landmark_mp import detect_landmarks_mp
+from .landmark_mp import detect_landmarks_mp, detect_blendshapes_mp
 
 
 def detect_landmarks(image) -> np.ndarray | None:
     """Return (478, 2) float32 pixel-coordinate landmark array, or None."""
     return detect_landmarks_mp(image, refine=True)
+
+
+def detect_blendshapes(image) -> np.ndarray | None:
+    """Return (52,) float32 blendshape score array, or None."""
+    return detect_blendshapes_mp(image)

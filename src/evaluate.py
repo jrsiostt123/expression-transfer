@@ -131,10 +131,61 @@ def _color_drift(source: np.ndarray, result: np.ndarray, mask: np.ndarray) -> di
 _LEFT_EYE  = [33, 160, 158, 133, 153, 144]
 _RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
+# Expression-relevant landmark groups (MediaPipe 478)
+_BROW_IDX  = [70, 63, 105, 66, 107, 336, 296, 334, 293, 300]
+_MOUTH_IDX = [61, 40, 37, 0, 267, 270, 291, 321, 314, 17, 84, 91,
+              78, 191, 80, 13, 308, 402, 14, 88]
+# Jaw/chin: stable, expression-independent — used for identity preservation
+_JAW_IDX   = [234, 93, 132, 58, 172, 136, 150, 149, 152,
+              377, 400, 378, 379, 365, 397, 288, 454]
+
+# MediaPipe blendshape indices that correspond to visible expression AUs.
+# Index 0 (_neutral) is excluded; eye-gaze blendshapes are also excluded
+# since they reflect look direction rather than expression.
+_EXPR_BS_IDX = [
+    1,  2,  3,  4,  5,   # browDown L/R, browInnerUp, browOuterUp L/R
+    6,  7,  8,           # cheekPuff, cheekSquint L/R
+    9, 10,               # eyeBlink L/R
+    19, 20, 21, 22,      # eyeSquint L/R, eyeWide L/R
+    25,                  # jawOpen
+    27, 28, 29,          # mouthClose, mouthDimple L/R
+    30, 31, 32,          # mouthFrown L/R, mouthFunnel
+    34, 35,              # mouthLowerDown L/R
+    38, 39,              # mouthPucker, mouthRight
+    40, 41, 42, 43,      # mouthRollLower/Upper, mouthShrugLower/Upper
+    44, 45,              # mouthSmile L/R
+    46, 47,              # mouthStretch L/R
+    48, 49,              # mouthUpperUp L/R
+    50, 51,              # noseSneer L/R
+]
+
 
 def _eye_centers(lm: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return (left_eye_center, right_eye_center) averaged over 6 pts each."""
     return lm[_LEFT_EYE].mean(axis=0), lm[_RIGHT_EYE].mean(axis=0)
+
+
+def _region_rmse(aligned_result: np.ndarray, ref_lm: np.ndarray, idx: list) -> float:
+    """RMSE between aligned_result and ref_lm restricted to landmark indices idx."""
+    diff = aligned_result[idx] - ref_lm[idx]
+    return float(np.sqrt(np.mean(np.sum(diff ** 2, axis=1))))
+
+
+def _blendshape_similarity(bs_driver: np.ndarray, bs_result: np.ndarray) -> dict:
+    """
+    Compare two (52,) blendshape score arrays on expression-relevant AUs only.
+
+    Returns:
+        cosine_sim : float  — 1.0 = identical AUs, 0 = orthogonal  (↑ better)
+        mae        : float  — mean absolute error across AUs (0–1 scale)  (↓ better)
+    """
+    a = bs_driver[_EXPR_BS_IDX].astype(float)
+    b = bs_result[_EXPR_BS_IDX].astype(float)
+    norm_a = np.linalg.norm(a) + 1e-8
+    norm_b = np.linalg.norm(b) + 1e-8
+    cosine = float(np.dot(a, b) / (norm_a * norm_b))
+    mae    = float(np.mean(np.abs(a - b)))
+    return {"cosine_sim": cosine, "mae": mae}
 
 
 def _align_lm_similarity(src_lm: np.ndarray, ref_lm: np.ndarray) -> np.ndarray:
@@ -180,6 +231,8 @@ def compute_metrics(
     target_lm:  np.ndarray,
     driver_lm:  np.ndarray,
     detect_fn=None,
+    driver_blendshapes: np.ndarray = None,
+    detect_bs_fn=None,
 ) -> dict:
     """
     Compute all evaluation metrics for one expression transfer result.
@@ -235,6 +288,10 @@ def compute_metrics(
 
     metrics["etr"]               = None
     metrics["lm_rmse_vs_driver"] = None
+    metrics["brow_rmse"]         = None
+    metrics["mouth_rmse"]        = None
+    metrics["jaw_rmse"]          = None
+    metrics["blendshape"]        = None
 
     if detect_fn is None:
         return metrics
@@ -245,7 +302,7 @@ def compute_metrics(
               "ETR and LM RMSE skipped.")
         return metrics
 
-    # ETR — expression-relevant subset, all in original (unaligned) space
+    # ── 6. ETR ───────────────────────────────────────────────────────────────
     sl = source_lm[_EXPR_IDX]
     tl = target_lm[_EXPR_IDX]
     rl = result_lm[_EXPR_IDX]
@@ -254,14 +311,31 @@ def compute_metrics(
     if intended > 1e-6:
         metrics["etr"] = float(achieved / intended)
 
-    # ── 7. LM RMSE vs driver ─────────────────────────────────────────────────
-    # result_lm is in original space; driver_lm is in aligned space.
-    # _align_lm_similarity maps result_lm into driver_lm's frame using
-    # scale + rotation + translation so neither scale nor tilt inflate RMSE.
+    # ── 7–9. Per-region RMSE vs driver ───────────────────────────────────────
+    # Align result into driver's coordinate frame once, then evaluate each
+    # region separately.  Three regions tell three different stories:
+    #   brow_rmse   — how well brow expression matches driver
+    #   mouth_rmse  — how well mouth expression matches driver
+    #   jaw_rmse    — how much non-expression geometry shifted (identity cost)
     result_in_drv = _align_lm_similarity(result_lm, driver_lm)
     metrics["lm_rmse_vs_driver"] = float(np.sqrt(np.mean(
         np.sum((result_in_drv - driver_lm) ** 2, axis=1)
     )))
+    metrics["brow_rmse"]  = _region_rmse(result_in_drv, driver_lm, _BROW_IDX)
+    metrics["mouth_rmse"] = _region_rmse(result_in_drv, driver_lm, _MOUTH_IDX)
+    metrics["jaw_rmse"]   = _region_rmse(result_in_drv, driver_lm, _JAW_IDX)
+
+    # ── 10. Blendshape similarity ─────────────────────────────────────────────
+    # Compare MediaPipe AU scores between driver and result.
+    # cosine_sim ≈ 1.0 → AUs match; mae ≈ 0 → AU intensities match.
+    # This is independent of the landmark pipeline and measures perceived
+    # expression directly.
+    if driver_blendshapes is not None and detect_bs_fn is not None:
+        result_bs = detect_bs_fn(result_img)
+        if result_bs is not None:
+            metrics["blendshape"] = _blendshape_similarity(
+                driver_blendshapes, result_bs
+            )
 
     return metrics
 
@@ -331,6 +405,31 @@ def print_metrics(metrics: dict) -> None:
         print(f"  LM RMSE vs driver  : {rmse:.2f} px  ({rmse_note})")
     else:
         print(f"  LM RMSE vs driver  : N/A")
+
+    # ── Per-region RMSE ───────────────────────────────────────────────────────
+    brow_r  = metrics.get("brow_rmse")
+    mouth_r = metrics.get("mouth_rmse")
+    jaw_r   = metrics.get("jaw_rmse")
+    if brow_r is not None:
+        print(f"  Brow  RMSE         : {brow_r:.2f} px"
+              f"  ({'✓' if brow_r < 8 else '↑ high'})")
+    if mouth_r is not None:
+        print(f"  Mouth RMSE         : {mouth_r:.2f} px"
+              f"  ({'✓' if mouth_r < 8 else '↑ high'})")
+    if jaw_r is not None:
+        jaw_note = "✓ identity preserved" if jaw_r < 6 else (
+                   "moderate drift" if jaw_r < 12 else "↑ identity distorted")
+        print(f"  Jaw   RMSE         : {jaw_r:.2f} px  ({jaw_note})")
+
+    # ── Blendshape similarity ─────────────────────────────────────────────────
+    bs = metrics.get("blendshape")
+    if bs is not None:
+        cos  = bs["cosine_sim"]
+        mae  = bs["mae"]
+        cos_note = "✓ good" if cos > 0.90 else ("moderate" if cos > 0.75 else "↓ low — expression mismatch")
+        mae_note = "✓" if mae < 0.05 else ("moderate" if mae < 0.10 else "↑ high AU divergence")
+        print(f"  Blendshape cosine  : {cos:.3f}   ({cos_note})")
+        print(f"  Blendshape MAE     : {mae:.3f}   ({mae_note})")
 
     print(f"{sep}\n")
 
