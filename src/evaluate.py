@@ -219,6 +219,13 @@ def compute_metrics(
     metrics["ssim_background"] = _ssim_masked(source_img, result_img, bg_mask)
 
     # ── 6. ETR  ──────────────────────────────────────────────────────────────
+    # Only measure on expression-relevant landmarks:
+    #   eyebrows (17-26) + mouth outer (48-59) + mouth inner (60-67)
+    # Jaw (0-16), nose bridge (27-30), and nose base (31-35) barely move
+    # with expression; including them shrinks the denominator and inflates
+    # ETR unpredictably, especially for subtle expressions like sad/surprised.
+    _EXPR_IDX = list(range(17, 27)) + list(range(48, 68))   # 28 landmarks
+
     metrics["etr"]               = None
     metrics["lm_rmse_vs_driver"] = None
 
@@ -231,9 +238,12 @@ def compute_metrics(
               "ETR and LM RMSE skipped.")
         return metrics
 
-    # ETR — all in original (unaligned) space
-    intended = np.linalg.norm(target_lm - source_lm, axis=1).mean()
-    achieved = np.linalg.norm(result_lm - source_lm, axis=1).mean()
+    # ETR — expression-relevant subset, all in original (unaligned) space
+    sl = source_lm[_EXPR_IDX]
+    tl = target_lm[_EXPR_IDX]
+    rl = result_lm[_EXPR_IDX]
+    intended = np.linalg.norm(tl - sl, axis=1).mean()
+    achieved = np.linalg.norm(rl - sl, axis=1).mean()
     if intended > 1e-6:
         metrics["etr"] = float(achieved / intended)
 
@@ -268,11 +278,21 @@ def print_metrics(metrics: dict) -> None:
     print(f"  PSNR  full image   : {metrics['psnr_full_db']:.2f} dB")
 
     bg = metrics.get("ssim_background", float("nan"))
-    if bg == bg:   # not NaN
-        bg_note = "✓" if bg >= 0.98 else "↓ warp leaking outside face"
-        print(f"  SSIM  background   : {bg:.4f}   ({bg_note})")
-    else:
+    if bg != bg:   # NaN
         print(f"  SSIM  background   : N/A  (no background pixels outside halo zone)")
+    else:
+        ssim_full = metrics.get("ssim_full", float("nan"))
+        if abs(bg - ssim_full) < 1e-4:
+            # Values match — face is small relative to image; background
+            # dominates the full-image SSIM, so both metrics converge.
+            # This is expected behaviour for tight portrait crops where the
+            # face occupies < ~30 % of total pixels.
+            bg_note = "≈ full SSIM (face is small relative to image — normal)"
+        elif bg >= 0.98:
+            bg_note = "✓"
+        else:
+            bg_note = "↓ warp leaking outside face"
+        print(f"  SSIM  background   : {bg:.4f}   ({bg_note})")
 
     # ── Colour ────────────────────────────────────────────────────────────────
     if isinstance(cd, dict) and "mean" in cd:

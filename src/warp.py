@@ -24,6 +24,16 @@ def _apply_affine_to_triangle(
     dst_tri: np.ndarray
 ):
     """Warp one triangle from src_img into dst_img."""
+    # Skip degenerate (zero/near-zero area) triangles.
+    # cv2.getAffineTransform produces a singular matrix for collinear points,
+    # causing warpAffine to fill the entire patch with a single colour.
+    # This can happen when nearby landmarks collapse to the same pixel after
+    # clipping, or when the dlib→MP index mapping produces duplicate coords.
+    if abs(cv2.contourArea(src_tri.astype(np.float32))) < 1.0:
+        return
+    if abs(cv2.contourArea(dst_tri.astype(np.float32))) < 1.0:
+        return
+
     # Bounding rect of destination triangle
     x, y, w, h = cv2.boundingRect(dst_tri.astype(np.float32))
     x, y = max(x, 0), max(y, 0)

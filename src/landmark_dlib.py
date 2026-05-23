@@ -1,15 +1,26 @@
 """
 landmark_dlib.py — 68-point facial landmark detector (legacy fallback)
 """
+from __future__ import annotations
 import dlib
 import numpy as np
 import cv2
+import os
 
 # Load models once at module level
 _detector = dlib.get_frontal_face_detector()
 _predictor = None  # Loaded lazily via _load_predictor()
 
-MODEL_PATH = "shape_predictor_68_face_landmarks.dat"
+# Resolve model path relative to this file's directory so it works regardless
+# of the working directory the caller uses.  Falls back to bare filename so
+# any existing scripts that place the .dat next to demo.py still work.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_CANDIDATE_PATHS = [
+    os.path.join(_HERE, "..", "models", "shape_predictor_68_face_landmarks.dat"),
+    os.path.join(_HERE, "shape_predictor_68_face_landmarks.dat"),
+    "shape_predictor_68_face_landmarks.dat",
+]
+MODEL_PATH = next((p for p in _CANDIDATE_PATHS if os.path.exists(p)), _CANDIDATE_PATHS[0])
 
 
 def _load_predictor():
